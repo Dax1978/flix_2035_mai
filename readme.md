@@ -93,6 +93,13 @@ void battery_control_setup()
 }
 ```
 
+Добавить в **flix.ino** в функцию ***setup()*** после *Serial.println("Initializing complete");*:
+```C++
+...
+battery_control_setup();
+```
+
+
 ### 2. Функции для работы системы контроля заряда аккумулятора  
 В данном разделе описан код модуля контроля заряда аккумулятора и его вызываемая функция в *loop()*
 
@@ -146,7 +153,7 @@ void battery_control()
 }
 ```
 
-Добавить в **flix.ino** после *parseInput();*:
+Добавить в **flix.ino** в функцию ***loop()*** после *parseInput();*:
 ```C++
 ...
 battery_control();
