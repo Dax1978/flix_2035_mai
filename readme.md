@@ -20,15 +20,9 @@
 Соответственно выходное напряжение резистивного делителя будет рассчитываться как:
 $$ V_{out} = V_{in} * \frac{R2}{(R1 + R2)} $$
 
-(или все таки ???)
-$$ V_{out} = V_{in} * \frac{(R1 + R2)}{R2} $$
-
 Что можно также определить в функцию:
 ```C++
 #define VOLTAGE_OUT(Vin) (Vin * (R2 / (R1 + R2)))
-
-(или все таки ???)
-#define VOLTAGE_OUT(Vin) (Vin * ((R1 + R2) / R2))
 ```
 
 Так как в жизни мы привыкли видеть заряд батареи в %. То и код, который считывает значение с АЦП и преобразует его в уровень заряда батареи, напишу с его преобразованием значсения в диапазоне от 0 до 100%. В качестве приближенной оценки приму напряжение батареи 4.2 В за 100%, а напряжение 3.3 В за 0%. Я переведу их в милливольты, чтобы избежать вычислений с плавающей точкой.
@@ -114,8 +108,8 @@ battery_control_setup();
 #define ADC_REFERENCE 1100                                                  // reference voltage of ESP32
 #define BATTERY_MIN_PERCENTAGE 15                                           // min battery percentage to warning
 
-#define VOLTAGE_OUT(Vin) (Vin * ((R1 + R2) / R2))                           // calc output voltage of the resistor divider
-#define VOLTAGE_TO_ADC(in) ((ADC_REFERENCE * (in)) / BC_ADC_RESOLUTION)     // calc determine voltage at adc input
+#define VOLTAGE_OUT(Vin) (Vin * (R2 / (R1 + R2)))                           // calc output voltage of the resistor divider
+#define VOLTAGE_TO_ADC(in) ((ADC_REFERENCE * (in)) / ADC_RESOLUTION)        // calc determine voltage at adc input
 #define BATTERY_MAX_ADC VOLTAGE_TO_ADC(VOLTAGE_OUT(VOLTAGE_MAX))            // calc voltage max
 #define BATTERY_MIN_ADC VOLTAGE_TO_ADC(VOLTAGE_OUT(VOLTAGE_MIN))            // calc voltage min
 
