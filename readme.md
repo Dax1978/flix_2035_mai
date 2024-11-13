@@ -20,38 +20,38 @@
 Соответственно выходное напряжение резистивного делителя будет рассчитываться как:
 $$ V_{out} = V_{in} * \frac{R2}{(R1 + R2)} $$
 
-Что можно также определить в функцию:
+При это исходное значение источника питания, при вычисленном значении поступающего на контрольный пин информации, будет обратной функцией:
+$$ V_{in} = V_{out} * \frac{(R1 + R2)}{R2} $$
+
+Значение, возвращаемое АЦП, работающим в 12-битном режиме, будет находиться в диапазоне от 0 до 4095 ([из документации](https://demo-dijiudu.readthedocs.io/en/stable/api-reference/peripherals/adc.html#_CPPv225adc1_config_channel_atten14adc1_channel_t11adc_atten_t)). Затем мы можем преобразовать напряжение в значение АЦП, используя следующую формулу:
+$$ V_{adc} = \frac{(ADC * ADC\_REFERENCE)}{ADC\_RESOLUTION} $$
+
+где:  
+***ADC*** - значение на пине  
+***ADC_REFERENCE*** = 1.1 В - референсное (опорное) напряжение на пине  
+***ADC_RESOLUTION*** = 4096 - максимальное значение на порту  
+
+Отсюда реальное значение напряжения:
+$$ V = ADC * \frac{ADC\_REFERENCE}{ADC\_RESOLUTION} * \frac{R2}{(R1 + R2)} $$
+  
 ```C++
-#define VOLTAGE_OUT(Vin) (Vin * (R2 / (R1 + R2)))
+#define ADC_REFERENCE 1.1
+#define ADC_RESOLUTION 4096
+
+float voltage(int adc)
+{
+    return (float)adc * (ADC_REFERENCE / ADC_RESOLUTION) * ((R1 + R2) / R2);
+}
 ```
 
 Так как в жизни мы привыкли видеть заряд батареи в %. То и код, который считывает значение с АЦП и преобразует его в уровень заряда батареи, напишу с его преобразованием значсения в диапазоне от 0 до 100%. В качестве приближенной оценки приму напряжение батареи 4.2 В за 100%, а напряжение 3.3 В за 0%. Я переведу их в милливольты, чтобы избежать вычислений с плавающей точкой.
 ```C++
-#define VOLTAGE_MAX 4200
-#define VOLTAGE_MIN 3300
-```
+#define VOLTAGE_MAX 4.2
+#define VOLTAGE_MIN 3.3
 
-Далее учитывая конструктивные особенности выбранного микроконтроллера, а именно что опорное напряжение АЦП ESP32 составляет 1100 мВ, определю его в коде:  
-```C++
-#define ADC_REFERENCE 1100
-```
-
-Значение, возвращаемое АЦП, работающим в 12-битном режиме, будет находиться в диапазоне от 0 до 4095 ([из документации](https://translated.turbopages.org/proxy_u/en-ru.ru.1954bb9a-6731dd5b-ab955629-74722d776562/https/demo-dijiudu.readthedocs.io/en/stable/api-reference/peripherals/adc.html#_CPPv225adc1_config_channel_atten14adc1_channel_t11adc_atten_t)). Затем мы можем преобразовать напряжение в значение АЦП, используя следующую формулу:
-```C++
-#define VOLTAGE_TO_ADC(in) ((ADC_REFERENCE * (in)) / 4096)
-```
-
-Итак, минимальное и максимальное значения напряжения батареи, преобразованные резистивным делителем и возвращаемые АЦП, составляют:  
-```C++
-#define BATTERY_MAX_ADC VOLTAGE_TO_ADC(VOLTAGE_OUT(VOLTAGE_MAX))
-#define BATTERY_MIN_ADC VOLTAGE_TO_ADC(VOLTAGE_OUT(VOLTAGE_MIN))
-```
-
-Извлечение значения из АЦП довольно простое. Допустим, у меня есть значение из АЦП в переменной с именем adc. Тогда расчет уровня заряда батареи будет выглядеть следующим образом:
-```C++
-int calc_battery_percentage(int adc)
+int calc_battery_percentage(float vadc)
 {
-    int battery_percentage = 100 * (adc - BATTERY_MIN_ADC) / (BATTERY_MAX_ADC - BATTERY_MIN_ADC);
+    int battery_percentage = 100 * (vadc - VOLTAGE_MIN) / (VOLTAGE_MAX - VOLTAGE_MIN);
 
     if (battery_percentage < 0)
         battery_percentage = 0;
@@ -61,6 +61,11 @@ int calc_battery_percentage(int adc)
     return battery_percentage;
 }
 ```
+
+Итак, минимальное и максимальное значения напряжения батареи, преобразованные резистивным делителем и возвращаемые АЦП, составляют:
+- min: 2457 - соответствует напряжению 3.3 В
+- max: 3130 - соответствует напряжению 4.2 В
+
 
 Для работы кода потребуется определить переменную кода пина, на котором будет определяться напряжение:
 ```C++
@@ -69,33 +74,30 @@ int calc_battery_percentage(int adc)
 
 ## Код определения напряжения  
 В целом программный код определения напряжения я разобъю на 3 раздела:
-1. Функция для раздела инициализации, вызываемая в **setup()** при инициализации коптера;
-2. Функции для работы системы контроля заряда аккумулятора, вызываемая постоянно в **loop()**.
+1. flix.h
+2. flix.ino  
+3. battery.ino
+4. cli.ino
 
-### 1. Функция для раздела инициализации  
-В данной функции будут определены все настройки, необходимые в последующем для постоянного вычисления напряжения в цикле.
-
+### 1. flix.h
+Здесь необходимо объявить все функции, которые понадобятся для определения напряжения. По сути это 2 функции:  
 ```C++
-// Функция инициализации параметров системы контроля заряда батареи
-void battery_control_setup()
-{
-    // Настройку порта делать нецелесообразно, т.к. в основном коде данная настройка уже присутствует и составляет: #define SERIAL_BAUDRATE 115200
-    // Serial.begin(9600);
-    // set the ADC attenuation to 11 dB (up to ~3.3V input)
-    // устанавливаю затухание АЦП на 11 дБ (до ~3,3 В на входе)
-    analogSetAttenuation(ADC_11db);
-}
+// battery
+void battery_control();                                                     // показать процент заряда аккумулятора
+uint16_t analogRead(uint8_t pin);                                           // чтение аналогово выхода из Arduino.h
 ```
 
-Добавить в **flix.ino** в функцию ***setup()*** после *Serial.println("Initializing complete");*:
+### 2. flix.ino  
+Устанавливаю затухание АЦП на 11 дБ (до ~3,3 В на входе).
+В раздел setup() надо добавить:
 ```C++
-...
-battery_control_setup();
+// battery: set the ADC attenuation to 11 dB (up to ~3.3V input)
+analogSetAttenuation(ADC_11db);
 ```
 
-
-### 2. Функции для работы системы контроля заряда аккумулятора  
-В данном разделе описан код модуля контроля заряда аккумулятора и его вызываемая функция в *loop()*
+### 3. battery.ino  
+Создаю новый модуль *battery.ino*.  
+В данном модуле содержаться параметры и функции вычисления напряжения.
 
 Код модуля **battery.ino**
 ```C++
@@ -103,53 +105,60 @@ battery_control_setup();
 #define R1 47                                                               // resistor values in voltage sensor (in kiloohms)
 #define R2 10                                                               // resistor values in voltage sensor (in kiloohms)
 #define ADC_RESOLUTION 4096                                                 // range ADC working in 12-bit mode
-#define VOLTAGE_MAX 4200                                                    // max battery voltage
-#define VOLTAGE_MIN 3300                                                    // min battery voltage
-#define ADC_REFERENCE 1100                                                  // reference voltage of ESP32
+#define VOLTAGE_MAX 4.2                                                     // max battery voltage
+#define VOLTAGE_MIN 3.3                                                     // min battery voltage
+#define ADC_REFERENCE 1.1                                                   // reference voltage of ESP32
 #define BATTERY_MIN_PERCENTAGE 15                                           // min battery percentage to warning
 
-#define VOLTAGE_OUT(Vin) (Vin * (R2 / (R1 + R2)))                           // calc output voltage of the resistor divider
-#define VOLTAGE_TO_ADC(in) ((ADC_REFERENCE * (in)) / ADC_RESOLUTION)        // calc determine voltage at adc input
-#define BATTERY_MAX_ADC VOLTAGE_TO_ADC(VOLTAGE_OUT(VOLTAGE_MAX))            // calc voltage max
-#define BATTERY_MIN_ADC VOLTAGE_TO_ADC(VOLTAGE_OUT(VOLTAGE_MIN))            // calc voltage min
-
-// Определение процента заряда аккумулятора
-float calc_battery_percentage(float adc)
+// calc voltage
+float voltage(int adc)
 {
-    float battery_percentage = 100 * (adc - BATTERY_MIN_ADC) / (BATTERY_MAX_ADC - BATTERY_MIN_ADC);
+    return (float)adc * (ADC_REFERENCE / ADC_RESOLUTION) * ((R1 + R2) / R2);
+}
 
-    if (battery_percentage < 0)
-        battery_percentage = 0;
-    if (battery_percentage > 100)
-        battery_percentage = 100;
+// calc percentage of battery
+float calc_battery_percentage(float vadc)
+{
+    float battery_percentage = 100.0 * (vadc - VOLTAGE_MIN) / (VOLTAGE_MAX - VOLTAGE_MIN);
+
+    if (battery_percentage < 0.0)
+        battery_percentage = 0.0;
+    if (battery_percentage > 100.0)
+        battery_percentage = 100.0;
 
     return battery_percentage;
 }
 
-void battery_control()
-{    
-    int adc_value = analogRead(ANALOG_IN_PIN);                              // read the analog input    
-    float voltage_adc = VOLTAGE_TO_ADC(adc_value);                          // determine voltage at adc input
-    float voltage_in = VOLTAGE_OUT(voltage_adc);                            // calculate voltage at the sensor input
-    float battery_percentage = calc_battery_percentage(voltage_in)          // calculate battery percentage
+// show percentage of battery
+void battery_control() {
+    // int adc = analogRead(ANALOG_IN_PIN);
+    int adc = 2177;
 
-    // Что будем делать с этим:
-
-    // print results to serial monitor to 2 decimal places
-    Serial.print("Battery: ");
-    Serial.println(battery_percentage, 2);
-
-    // print a low battery warning
-    if (battery_percentage <= BATTERY_MIN_PERCENTAGE)
-    {
-        Serial.print("Warning! Battery is low.");
-    }
+    bat = calc_battery_percentage(voltage(adc));
+	Serial.printf("Battery: %.2f%\n", bat);
+	// print a low battery warning
+    if (bat <= 15.0)
+        Serial.print("Warning! Battery is low.\n");
 }
 ```
 
-Добавить в **flix.ino** в функцию ***loop()*** после *parseInput();*:
+В модуле по сути раздел объявления переменных, и 3 функции:
+- ***voltage(int adc)*** - расчет напряжения по данным с контрольного PIN;
+- ***calc_battery_percentage(float vadc)*** - расчет процента зарядааккумулятора, учитывая максимальное и минимальное возможные значения напряжения аккумулятора;
+- ***battery_control()*** - функция, вызываемая в командной строке, и показывающая заряд аккумулятора.
+
+### 4. cli.ino
+В данном модуле организовано общение с коптером, через использование командной строки.  
+Для получения информации о состоянии батареи необходимо указать команду **bat**.  
+В код необходимо добавить обработку данной команды и вызов функции battery_control(), которую для видимости в *cli.ino* и прописывал в *flix.h*.
 ```C++
-...
-battery_control();
-...
+    ...
+    } else if (command == "reset") {
+		attitude = Quaternion();
+    // - * - insert - * -
+	} else if (command == "bat") {
+		battery_control();
+    // - * - end insert - * -
+	} else {
+    ...
 ```
